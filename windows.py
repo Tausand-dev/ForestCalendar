@@ -190,8 +190,6 @@ class CalendarWindow(QtWidgets.QMainWindow):
     def changeDate(self):
         date = self.calendar_widget.selectedDate().toPyDate()
         self.event_date.setText(date.strftime("%Y/%m/%d"))
-        # self.setText(getDate)
-        # self.calendar.deleteLater()
 
     # def closeEvent(self, event):
         # self.is_closed = True
