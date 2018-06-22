@@ -21,6 +21,7 @@ class TimeLabel(QtWidgets.QLabel):
         QtWidgets.QLabel.__init__(self)
         self.setMinimumHeight(30)
         self.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Ignored)
+        self.setAlignment(QtCore.Qt.AlignCenter)
         # self.font_name = "Monospace"
         # if CURRENT_OS == "win32":
         self.font_name = "Courier New"
@@ -99,10 +100,6 @@ class TimeLabel(QtWidgets.QLabel):
             return True
 
 class CalendarWindow(QtWidgets.QMainWindow):
-    FIELDS = ["Nombre", "Documento", "Dirección", "Ciudad", "Teléfono", "Correo"]
-    WIDGETS = ["nombre", "documento", "direccion", "ciudad", "telefono", "correo"]
-    AUTOCOMPLETE_FIELDS = ["Nombre", "Correo", "Documento", "Teléfono"]
-    AUTOCOMPLETE_WIDGETS = ["nombre", "correo", "documento", "telefono"]
     def __init__(self, parent = None):
         super(QtWidgets.QMainWindow, self).__init__(parent)
         self.setWindowTitle("Calendario")
@@ -111,7 +108,6 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(wid)
 
         self.verticalLayout = QtWidgets.QVBoxLayout(wid)
-
         self.verticalLayout.setContentsMargins(11, 11, 11, 11)
         self.verticalLayout.setSpacing(6)
 
@@ -121,25 +117,50 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.time_widget = TimeLabel()
         self.time_layout.addWidget(self.time_widget)
 
-        self.event_form = QtWidgets.QGroupBox("Set event:")
-        self.event_layout = QtWidgets.QFormLayout(self.event_form)
+        self.calendar_group = QtWidgets.QGroupBox("Calendar:")
+        self.calendar_layout = QtWidgets.QHBoxLayout(self.calendar_group)
+        self.calendar_widget = QtWidgets.QCalendarWidget()
+        self.calendar_widget.setMinimumDate(datetime.now().date())
 
-        self.from_date_widget = CalWidget(self)
+        self.event_group = QtWidgets.QGroupBox("Events:")
+        self.event_layout = QtWidgets.QVBoxLayout(self.event_group)
+        self.event_date = QtWidgets.QLabel("")
+        self.event_date.setAlignment(QtCore.Qt.AlignCenter)
+        self.event_list = QtWidgets.QListWidget()
+        self.button_frame = QtWidgets.QFrame()
+        self.button_frame_layout = QtWidgets.QHBoxLayout(self.button_frame)
+        self.times_group = QtWidgets.QGroupBox("Event start/stop:")
+        self.times_layout = QtWidgets.QFormLayout(self.times_group)
+
+        self.add_button = QtWidgets.QPushButton("Add")
+        self.remove_button = QtWidgets.QPushButton("Remove")
+
+        self.button_frame_layout.addWidget(self.add_button)
+        self.button_frame_layout.addWidget(self.remove_button)
+
         self.from_time_widget = QtWidgets.QTimeEdit()
-        self.to_date_widget = CalWidget(self)
         self.to_time_widget = QtWidgets.QTimeEdit()
-        self.setEventTimes()
 
-        self.event_layout.addRow(QtWidgets.QLabel("Start date:"), self.from_date_widget)
-        self.event_layout.addRow(QtWidgets.QLabel("Start time:"), self.from_time_widget)
-        self.event_layout.addRow(QtWidgets.QLabel("Stop date:"), self.to_date_widget)
-        self.event_layout.addRow(QtWidgets.QLabel("Stop time:"), self.to_time_widget)
+        self.times_layout.addRow(QtWidgets.QLabel("Start time:"), self.from_time_widget)
+        self.times_layout.addRow(QtWidgets.QLabel("Stop time:"), self.to_time_widget)
+
+        self.event_layout.addWidget(self.event_date)
+        self.event_layout.addWidget(self.event_list)
+        self.event_layout.addWidget(self.button_frame)
+        self.event_layout.addWidget(self.times_group)
+
+        self.calendar_layout.addWidget(self.calendar_widget)
+        self.calendar_layout.addWidget(self.event_group)
 
         self.verticalLayout.addWidget(self.time_groupBox)
-        self.verticalLayout.addWidget(self.event_form)
+        self.verticalLayout.addWidget(self.calendar_group)
+
+        self.calendar_widget.selectionChanged.connect(self.changeDate)
 
         self.setMinimumWidth(300)
-        self.resize(self.verticalLayout.sizeHint())
+        self.centerOnScreen()
+        self.setEventTimes()
+        self.changeDate()
 
     def centerOnScreen(self):
         resolution = QtWidgets.QDesktopWidget().screenGeometry()
@@ -166,6 +187,11 @@ class CalendarWindow(QtWidgets.QMainWindow):
         else:
             self.to_time_widget.setTime(to_time)
 
+    def changeDate(self):
+        date = self.calendar_widget.selectedDate().toPyDate()
+        self.event_date.setText(date.strftime("%Y/%m/%d"))
+        # self.setText(getDate)
+        # self.calendar.deleteLater()
 
     # def closeEvent(self, event):
         # self.is_closed = True
