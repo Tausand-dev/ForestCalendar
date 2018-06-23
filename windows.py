@@ -2,6 +2,36 @@ from datetime import datetime
 from datetime import timedelta
 from PyQt5 import QtCore, QtWidgets, QtGui
 
+class Event(object):
+    def __init__(self, date, start, stop, is_child = False):
+        self.date = date
+        self.start = start
+        self.stop = stop
+        self.is_child = is_child
+
+    def setDate(self, date):
+        self.date = date
+
+    def setStart(self, start):
+        self.start = start
+
+    def setStop(self, stop):
+        self.stop = stop
+
+    def getDate(self):
+        return self.date
+
+    def getStart(self):
+        return self.start
+
+    def getStop(self):
+        return self.stop
+
+    def __str__(self):
+        start = self.start.strftime("%H:%M")
+        stop = self.stop.strftime("%H:%M")
+        return "%s - %s"%(start, stop)
+
 class CalWidget(QtWidgets.QDateTimeEdit):
     def __init__(self, parent = None):
         now = datetime.now()
@@ -155,11 +185,25 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.verticalLayout.addWidget(self.time_groupBox)
         self.verticalLayout.addWidget(self.calendar_group)
 
+        self.current_date = datetime.today()
+        self.events = {}
+
+        self.timesEnabled(False)
+        self.remove_button.setEnabled(False)
+
+        #####
+        ##### SIGNALS
+        #####
         self.calendar_widget.selectionChanged.connect(self.changeDate)
+        self.event_list.itemSelectionChanged.connect(self.changeTimes)
+        self.event_list.itemDoubleClicked.connect(self.selectHandler)
+        self.add_button.clicked.connect(self.addHandler)
+        self.remove_button.clicked.connect(self.removeHandler)
+        self.from_time_widget.timeChanged.connect(self.fromTimeChanged)
 
         self.setMinimumWidth(300)
         self.centerOnScreen()
-        self.setEventTimes()
+        self.setTimeWidgets()
         self.changeDate()
 
     def centerOnScreen(self):
@@ -176,7 +220,7 @@ class CalendarWindow(QtWidgets.QMainWindow):
         msg.setStandardButtons(QtWidgets.QMessageBox.Ok)
         msg.exec_()
 
-    def setEventTimes(self, from_time = None, to_time = None):
+    def setTimeWidgets(self, from_time = None, to_time = None):
         now = datetime.now()
         if from_time == None:
             self.from_time_widget.setTime(now.time())
@@ -187,10 +231,87 @@ class CalendarWindow(QtWidgets.QMainWindow):
         else:
             self.to_time_widget.setTime(to_time)
 
-    def changeDate(self):
-        date = self.calendar_widget.selectedDate().toPyDate()
-        self.event_date.setText(date.strftime("%Y/%m/%d"))
+    def timesEnabled(self, bool):
+        self.from_time_widget.setEnabled(bool)
+        self.to_time_widget.setEnabled(bool)
 
+    def formatDate(self, date):
+        return date.strftime("%Y/%m/%d")
+
+    def addHandler(self):
+        txt = self.add_button.text()
+        if txt == "Edit":
+            self.timesEnabled(True)
+            self.add_button.setText("Save")
+        elif txt == "Save":
+            self.timesEnabled(False)
+            self.add_button.setText("Add")
+            self.remove_button.setEnabled(False)
+            self.event_list.clearSelection()
+
+            txt = self.formatDate(self.current_date)
+            event = Event(self.current_date, self.from_time_widget.time().toPyTime(), self.to_time_widget.time().toPyTime())
+
+            overlap = False:
+            for item in self.events:
+                if(item.getStart() <= event.getStop())
+
+            try:
+                self.events[txt].append(event)
+            except KeyError:
+                self.events[txt] = [event]
+            self.addItems(self.events[txt])
+        elif txt == "Add":
+            self.timesEnabled(True)
+            self.add_button.setText("Save")
+            self.setTimeWidgets()
+
+    def removeHandler(self):
+        pos = self.event_list.currentRow()
+        evt = self.events[self.formatDate(self.current_date)].pop(pos)
+        self.addItems(self.events[self.formatDate(self.current_date)])
+        self.selectHandler()
+
+    def addItems(self, events):
+        self.event_list.blockSignals(True)
+        self.event_list.clear()
+        self.event_list.addItems([str(event) for event in events])
+        self.event_list.blockSignals(False)
+
+    def selectHandler(self):
+        self.timesEnabled(False)
+        self.add_button.setText("Add")
+        self.remove_button.setEnabled(False)
+        self.event_list.blockSignals(True)
+        self.event_list.clearSelection()
+        self.event_list.blockSignals(False)
+
+    def changeDate(self):
+        self.current_date = self.calendar_widget.selectedDate().toPyDate()
+        txt = self.formatDate(self.current_date)
+        self.event_date.setText(txt)
+        try:
+            self.addItems(self.events[txt])
+        except KeyError:
+            self.event_list.blockSignals(True)
+            self.event_list.clear()
+            self.event_list.clearSelection()
+            self.event_list.blockSignals(False)
+            self.add_button.setText("Add")
+            self.remove_button.setEnabled(False)
+
+    def changeTimes(self):
+        pos = self.event_list.currentRow()
+        evt = self.events[self.formatDate(self.current_date)][pos]
+        self.setTimeWidgets(evt.getStart(), evt.getStop())
+        self.add_button.setText("Edit")
+        self.timesEnabled(False)
+        self.remove_button.setEnabled(True)
+
+    def fromTimeChanged(self):
+        time = self.from_time_widget.time().toPyTime()
+        date = datetime(2018, 1, 1, time.hour, time.minute) + timedelta(minutes = 1)
+        self.to_time_widget.setMinimumTime(date.time())
     # def closeEvent(self, event):
         # self.is_closed = True
         # event.accept()
