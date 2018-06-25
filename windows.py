@@ -1,13 +1,85 @@
+import os
+from copy import copy
 from datetime import datetime
 from datetime import timedelta
 from PyQt5 import QtCore, QtWidgets, QtGui
+from dateutil.relativedelta import relativedelta
+
+from serial import Serial
+import serial.tools.list_ports as find_ports
+
+REPEAT_OPTIONS = ["Day", "Week", "Month"]
+
+def findPorts():
+    ports_objects = list(find_ports.comports())
+    ports = {}
+    for i in range(len(ports_objects)):
+        port = ports_objects[i]
+        try:
+            com = RecorderSerial(port.device)
+            if com.testRecorder():
+                ports["%s"%port.description] = port.device
+            com.close()
+        except Exception as e:
+            print(e)
+    return ports
+
+class RecorderSerial(Serial):
+    def __init__(self, port, baudrate = 9600, timeout = 2):
+        super(RecorderSerial, self).__init__(port, baudrate = baudrate, timeout = timeout)
+        sleep(1)
+
+    def testRecorder(self):
+        line = self.readline()
+        try:
+            line = line.decode()
+            if line == "Connection\r\n":
+                return True
+        except:
+            pass
+        return False
+
+    def decode(self, line):
+        return line.decode().replace("\r\n", "")
+
+    def setTime(self, time):
+        temp = time.strftime("%d%m%y%H%M%S")
+
+        ascii_time = [ord(i) for i in temp]
+        message = [0x00] + ascii_time
+
+        ans = ""
+
+        while True:
+            self.write(message)
+            ans = self.decode(serial.readline())
+            try:
+                datetime.strptime(ans, '%d,%m,%y,%H,%M,%S')
+                break
+            except:
+                pass
+
+    def getTime(self):
+        self.write([1])
+        ans = self.readline()
+        ans = self.decode(ans)
+        try:
+            return datetime.strptime(ans, '%d,%m,%y,%H,%M,%S')
+        except:
+            return ans
+
+    def reset(self):
+        self.write([2])
 
 class Event(object):
-    def __init__(self, date, start, stop, is_child = False):
+    def __init__(self, date, start, stop, is_child = False, from_repeat = None, to_repeat = None, every = None):
         self.date = date
-        self.start = start
-        self.stop = stop
+        self.start = start.replace(second = 0, microsecond = 0)
+        self.stop = stop.replace(second = 0, microsecond = 0)
         self.is_child = is_child
+        self.from_repeat = from_repeat
+        self.to_repeat = to_repeat
+        self.every = every
 
     def setDate(self, date):
         self.date = date
@@ -18,6 +90,12 @@ class Event(object):
     def setStop(self, stop):
         self.stop = stop
 
+    def setChild(self, from_repeat, to_repeat, every):
+        self.is_child = True
+        self.from_repeat = from_repeat
+        self.to_repeat = to_repeat
+        self.every = every
+
     def getDate(self):
         return self.date
 
@@ -26,6 +104,25 @@ class Event(object):
 
     def getStop(self):
         return self.stop
+
+    def isChild(self):
+        return self.is_child
+
+    def getFromRepeat(self):
+        return self.from_repeat
+
+    def getToRepeat(self):
+        return self.to_repeat
+
+    def getEvery(self):
+        return self.every
+
+    def save(self):
+        date = self.date.strftime('%d-%m-%y')
+        start = self.start.strftime("%H-%M")
+        stop = self.stop.strftime("%H-%M")
+        txt = "%s-%s; %s-%s\n"%(date, start, date, stop)
+        return txt
 
     def __str__(self):
         start = self.start.strftime("%H:%M")
@@ -169,10 +266,25 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.button_frame_layout.addWidget(self.remove_button)
 
         self.from_time_widget = QtWidgets.QTimeEdit()
+        self.from_time_widget.setDisplayFormat("HH:mm")
         self.to_time_widget = QtWidgets.QTimeEdit()
+        self.to_time_widget.setDisplayFormat("HH:mm")
+        self.repeat_widget = QtWidgets.QCheckBox("Repeat")
+        self.repeat_widget.setTristate(False)
+        self.repeat_widget.setChecked(True)
+        self.every_widget = QtWidgets.QComboBox()
+        self.every_widget.addItems(REPEAT_OPTIONS)
+        self.from_repeat_widget = QtWidgets.QDateEdit()
+        self.from_repeat_widget.setDisplayFormat("yyyy/MM/dd")
+        self.to_repeat_widget = QtWidgets.QDateEdit()
+        self.to_repeat_widget.setDisplayFormat("yyyy/MM/dd")
 
         self.times_layout.addRow(QtWidgets.QLabel("Start time:"), self.from_time_widget)
         self.times_layout.addRow(QtWidgets.QLabel("Stop time:"), self.to_time_widget)
+        self.times_layout.addRow(self.repeat_widget)
+        self.times_layout.addRow(QtWidgets.QLabel("Every:"), self.every_widget)
+        self.times_layout.addRow(QtWidgets.QLabel("From:"), self.from_repeat_widget)
+        self.times_layout.addRow(QtWidgets.QLabel("To:"), self.to_repeat_widget)
 
         self.event_layout.addWidget(self.event_date)
         self.event_layout.addWidget(self.event_list)
@@ -182,13 +294,26 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.calendar_layout.addWidget(self.calendar_widget)
         self.calendar_layout.addWidget(self.event_group)
 
+        self.button_frame = QtWidgets.QFrame()
+        self.button_frame_layout = QtWidgets.QHBoxLayout(self.button_frame)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum)
+        self.button_frame.setSizePolicy(sizePolicy)
+        self.button_frame_layout.setAlignment(QtCore.Qt.AlignRight)
+
+        self.export_widget = QtWidgets.QPushButton("Export Calendar")
+        self.sync_widget = QtWidgets.QPushButton("Synchronize Clock")
+        self.button_frame_layout.addWidget(self.sync_widget)
+        self.button_frame_layout.addWidget(self.export_widget)
+
         self.verticalLayout.addWidget(self.time_groupBox)
         self.verticalLayout.addWidget(self.calendar_group)
+        self.verticalLayout.addWidget(self.button_frame)
 
         self.current_date = datetime.today()
         self.events = {}
+        self.is_editting = False
 
-        self.timesEnabled(False)
+        self.times_group.setEnabled(False)
         self.remove_button.setEnabled(False)
 
         #####
@@ -200,8 +325,13 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.add_button.clicked.connect(self.addHandler)
         self.remove_button.clicked.connect(self.removeHandler)
         self.from_time_widget.timeChanged.connect(self.fromTimeChanged)
+        self.from_repeat_widget.dateChanged.connect(self.fromDateChanged)
+        self.repeat_widget.stateChanged.connect(self.repeatHandler)
+        self.sync_widget.clicked.connect(self.syncHandler)
+        self.export_widget.clicked.connect(self.exportHandler)
 
-        self.setMinimumWidth(300)
+        self.repeat_widget.setChecked(False)
+        # self.setMinimumWidth(300)
         self.centerOnScreen()
         self.setTimeWidgets()
         self.changeDate()
@@ -220,57 +350,152 @@ class CalendarWindow(QtWidgets.QMainWindow):
         msg.setStandardButtons(QtWidgets.QMessageBox.Ok)
         msg.exec_()
 
-    def setTimeWidgets(self, from_time = None, to_time = None):
-        now = datetime.now()
-        if from_time == None:
+    def setTimeWidgets(self, event = None):
+        if event == None:
+            now = datetime.now()
             self.from_time_widget.setTime(now.time())
-        else:
-            self.from_time_widget.setTime(from_time)
-        if to_time == None:
             self.to_time_widget.setTime((now + timedelta(minutes = 1)).time())
-        else:
-            self.to_time_widget.setTime(to_time)
 
-    def timesEnabled(self, bool):
-        self.from_time_widget.setEnabled(bool)
-        self.to_time_widget.setEnabled(bool)
+            now = self.current_date
+            self.from_repeat_widget.setDate(now)
+        else:
+            self.from_time_widget.setTime(event.getStart())
+            self.to_time_widget.setTime(event.getStop())
+            if event.isChild():
+                self.repeat_widget.setChecked(True)
+                self.from_repeat_widget.setDate(event.getFromRepeat())
+                self.to_repeat_widget.setDate(event.getToRepeat())
+                repeat = event.getEvery()
+                self.every_widget.setCurrentIndex(REPEAT_OPTIONS.index(repeat))
+            else:
+                self.repeat_widget.setChecked(False)
+                self.every_widget.setCurrentIndex(0)
 
     def formatDate(self, date):
         return date.strftime("%Y/%m/%d")
 
+    def saveEvent(self, event):
+        txt = self.formatDate(event.getDate())
+        try:
+            for item in self.events[txt]:
+                if ((item.getStart() <= event.getStop()) and (item.getStop() >= event.getStart())):
+                    date = item.getDate().strftime("%Y/%m/%d")
+                    raise(SystemError("The following times overlap: (%s) and (%s) on %s."%(item, event, date)))
+            self.events[txt].append(event)
+            self.events[txt] = sorted(self.events[txt], key = str)
+            self.addItems(self.events[txt])
+        except KeyError:
+            self.events[txt] = [event]
+            self.addItems(self.events[txt])
+
     def addHandler(self):
         txt = self.add_button.text()
         if txt == "Edit":
-            self.timesEnabled(True)
+            self.times_group.setEnabled(True)
             self.add_button.setText("Save")
+            self.is_editting = True
         elif txt == "Save":
-            self.timesEnabled(False)
+            old_events = copy(self.events)
+            if self.is_editting:
+                pos = self.event_list.currentRow()
+                evt = self.events[self.formatDate(self.current_date)][pos]
+                if self.repeat_widget.isChecked() and evt.isChild():
+                    self.removeMultipleDates(evt)
+                else:
+                    self.events[self.formatDate(self.current_date)].pop(pos)
+            try:
+                if self.repeat_widget.isChecked():
+                    start = self.from_repeat_widget.date().toPyDate()
+                    stop = self.to_repeat_widget.date().toPyDate()
+                    every = self.every_widget.currentText()
+                    from_ = self.from_time_widget.time().toPyTime()
+                    to_ = self.to_time_widget.time().toPyTime()
+                    dates = self.datesGenerator(start, stop, every)
+                    for date in dates:
+                        event = Event(date, from_, to_, True, start,
+                            stop, every)
+                        self.saveEvent(event)
+                else:
+                    event = Event(self.current_date, self.from_time_widget.time().toPyTime(),
+                                        self.to_time_widget.time().toPyTime())
+                    self.saveEvent(event)
+            except SystemError as e:
+                self.errorWindow(e)
+                self.events = old_events
+
+            self.times_group.setEnabled(False)
             self.add_button.setText("Add")
             self.remove_button.setEnabled(False)
             self.event_list.clearSelection()
-
-            txt = self.formatDate(self.current_date)
-            event = Event(self.current_date, self.from_time_widget.time().toPyTime(), self.to_time_widget.time().toPyTime())
-
-            overlap = False:
-            for item in self.events:
-                if(item.getStart() <= event.getStop())
-
-            try:
-                self.events[txt].append(event)
-            except KeyError:
-                self.events[txt] = [event]
-            self.addItems(self.events[txt])
+            self.is_editting = False
+            self.repeat_widget.setChecked(False)
         elif txt == "Add":
-            self.timesEnabled(True)
+            self.is_editting = False
+            self.times_group.setEnabled(True)
             self.add_button.setText("Save")
             self.setTimeWidgets()
 
+    def datesGenerator(self, from_date, to_date, every):
+        start = datetime(from_date.year, from_date.month, from_date.day)
+        stop = datetime(to_date.year, to_date.month, to_date.day)
+        current = copy(start)
+        dates = []
+        while current <= stop:
+            dates.append(current.date())
+            if every == "Day":
+                current = current + relativedelta(days = 1)
+            elif every == "Week":
+                current = current + relativedelta(weeks = 1)
+            else:
+                current = current + relativedelta(months = 1)
+        return dates
+
+    def checkEqual(self, event1, event2):
+        if event1.isChild() and event2.isChild():
+            if event1.getFromRepeat() == event2.getFromRepeat():
+                if event1.getToRepeat() == event2.getToRepeat():
+                    if event1.getEvery() == event2.getEvery():
+                        return True
+        return False
+
+    def removeMultipleDates(self, event):
+        dates = self.datesGenerator(event.getFromRepeat(),
+                        event.getToRepeat(), event.getEvery())
+        for date in dates:
+            date_txt = self.formatDate(date)
+            try:
+                events = self.events[date_txt]
+                not_remove = []
+                for evt in events:
+                    if not self.checkEqual(event, evt):
+                        not_remove.append(event)
+                self.events[date_txt] = not_remove
+            except KeyError:
+                pass
+
     def removeHandler(self):
         pos = self.event_list.currentRow()
-        evt = self.events[self.formatDate(self.current_date)].pop(pos)
-        self.addItems(self.events[self.formatDate(self.current_date)])
-        self.selectHandler()
+        event = self.events[self.formatDate(self.current_date)][pos]
+        if event.isChild():
+            msg = "There are multiple events associated.\nDo you want to remove all?"
+            reply = QtWidgets.QMessageBox.warning(self, 'Remove',
+                             msg, QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No | QtWidgets.QMessageBox.Cancel)
+
+            if reply != QtWidgets.QMessageBox.Cancel:
+                if reply == QtWidgets.QMessageBox.Yes:
+                    self.removeMultipleDates(event)
+                else:
+                    self.events[self.formatDate(self.current_date)].pop(pos)
+                self.addItems(self.events[self.formatDate(self.current_date)])
+                self.selectHandler()
+        else:
+            msg = "Are you sure you want to remove this event?"
+            reply = QtWidgets.QMessageBox.warning(self, 'Remove',
+                             msg, QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+            if reply == QtWidgets.QMessageBox.Yes:
+                self.events[self.formatDate(self.current_date)].pop(pos)
+                self.addItems(self.events[self.formatDate(self.current_date)])
+                self.selectHandler()
 
     def addItems(self, events):
         self.event_list.blockSignals(True)
@@ -279,12 +504,21 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.event_list.blockSignals(False)
 
     def selectHandler(self):
-        self.timesEnabled(False)
+        # self.timesEnabled(False)
+        self.times_group.setEnabled(False)
+        self.repeat_widget.setChecked(False)
         self.add_button.setText("Add")
         self.remove_button.setEnabled(False)
         self.event_list.blockSignals(True)
         self.event_list.clearSelection()
         self.event_list.blockSignals(False)
+        self.is_editting = False
+
+    def repeatHandler(self, state):
+        state = bool(state)
+        self.every_widget.setEnabled(state)
+        self.from_repeat_widget.setEnabled(state)
+        self.to_repeat_widget.setEnabled(state)
 
     def changeDate(self):
         self.current_date = self.calendar_widget.selectedDate().toPyDate()
@@ -299,22 +533,68 @@ class CalendarWindow(QtWidgets.QMainWindow):
             self.event_list.blockSignals(False)
             self.add_button.setText("Add")
             self.remove_button.setEnabled(False)
+            self.times_group.setEnabled(False)
+            self.repeat_widget.setChecked(False)
+            self.is_editting = False
 
     def changeTimes(self):
         pos = self.event_list.currentRow()
         evt = self.events[self.formatDate(self.current_date)][pos]
-        self.setTimeWidgets(evt.getStart(), evt.getStop())
+        self.setTimeWidgets(evt)
         self.add_button.setText("Edit")
-        self.timesEnabled(False)
+        self.times_group.setEnabled(False)
         self.remove_button.setEnabled(True)
 
     def fromTimeChanged(self):
         time = self.from_time_widget.time().toPyTime()
         date = datetime(2018, 1, 1, time.hour, time.minute) + timedelta(minutes = 1)
         self.to_time_widget.setMinimumTime(date.time())
-    # def closeEvent(self, event):
-        # self.is_closed = True
-        # event.accept()
+
+    def fromDateChanged(self):
+        date = self.from_repeat_widget.date().toPyDate()
+        date = datetime(date.year, date.month, date.day) + timedelta(days = 1)
+        self.to_repeat_widget.setMinimumDate(date.date())
+
+    def syncHandler(self):
+        ports = findPorts()
+        if len(ports):
+            port = ports[ports.keys[0]]
+            serial = None
+            try:
+                serial = RecorderSerial(port = port, timeout = 2)
+                serial.setTime(datetime.now())
+                serial.reset()
+            except Exception as e:
+                self.errorWindow(e)
+            if serial != None:
+                try: serial.close()
+                except: pass
+
+    def exportHandler(self):
+        if self.add_button.text() == "Save":
+            self.addHandler()
+        keys = sorted(list(self.events.keys()))
+        lines = [event.save() for key in keys for event in self.events[key]]
+        if len(lines) == 0:
+            self.errorWindow(Exception("Calendar is empty."))
+        else:
+            file = str(QtWidgets.QFileDialog.getExistingDirectory(self, "Select Directory"))
+            if file != "":
+                try:
+                    path = os.path.join(file, "schedule.dat")
+                    with open(path, "w") as file:
+                        file.write("".join(lines))
+                except Exception as e:
+                    self.errorWindow(e)
+
+    def closeEvent(self, event):
+        quit_msg = "Are you sure you want to exit the program?"
+        reply = QtWidgets.QMessageBox.question(self, 'Exit',
+                         quit_msg, QtWidgets.QMessageBox.Yes, QtWidgets.QMessageBox.No)
+        if reply == QtWidgets.QMessageBox.Yes:
+            event.accept()
+        else:
+            event.ignore()
 
 if __name__ == '__main__':
     import sys
