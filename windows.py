@@ -72,17 +72,10 @@ class RecorderSerial(Serial):
         self.write([2])
 
 class Event(object):
-    def __init__(self, date, start, stop, is_child = False, from_repeat = None, to_repeat = None, every = None):
-        self.date = date
+    def __init__(self, start, stop, is_child = False):
         self.start = start.replace(second = 0, microsecond = 0)
         self.stop = stop.replace(second = 0, microsecond = 0)
         self.is_child = is_child
-        self.from_repeat = from_repeat
-        self.to_repeat = to_repeat
-        self.every = every
-
-    def setDate(self, date):
-        self.date = date
 
     def setStart(self, start):
         self.start = start
@@ -90,32 +83,32 @@ class Event(object):
     def setStop(self, stop):
         self.stop = stop
 
-    def setChild(self, from_repeat, to_repeat, every):
-        self.is_child = True
-        self.from_repeat = from_repeat
-        self.to_repeat = to_repeat
-        self.every = every
-
-    def getDate(self):
-        return self.date
-
-    def getStart(self):
-        return self.start
-
-    def getStop(self):
-        return self.stop
-
-    def isChild(self):
-        return self.is_child
-
-    def getFromRepeat(self):
-        return self.from_repeat
-
-    def getToRepeat(self):
-        return self.to_repeat
-
-    def getEvery(self):
-        return self.every
+    # def setChild(self, from_repeat, to_repeat, every):
+    #     self.is_child = True
+    #     self.from_repeat = from_repeat
+    #     self.to_repeat = to_repeat
+    #     self.every = every
+    #
+    # def getDate(self):
+    #     return self.date
+    #
+    # def getStart(self):
+    #     return self.start
+    #
+    # def getStop(self):
+    #     return self.stop
+    #
+    # def isChild(self):
+    #     return self.is_child
+    #
+    # def getFromRepeat(self):
+    #     return self.from_repeat
+    #
+    # def getToRepeat(self):
+    #     return self.to_repeat
+    #
+    # def getEvery(self):
+    #     return self.every
 
     def save(self):
         date = self.date.strftime('%d-%m-%y')
@@ -128,6 +121,35 @@ class Event(object):
         start = self.start.strftime("%H:%M")
         stop = self.stop.strftime("%H:%M")
         return "%s - %s"%(start, stop)
+
+class RepeatableEvent(object):
+    def __init__(self, from_date, from_time, to_date, to_time, repeat_every):
+        self.every = repeat_every
+        self.from_date = from_date
+        self.from_time = from_time.replace(second = 0, microsecond = 0)
+        self.to_date = to_date
+        self.to_time = to_time.replace(second = 0, microsecond = 0)
+        self._from_ = datetime.combine(from_date, self.from_time)
+        self._to_ = datetime.combine(to_date, self.to_time)
+
+    def datesGenerator(self):
+        dates = []
+        current_start = copy(self._from_)
+        current_stop = copy(self._to_)
+        hours = 0
+        days = 0
+        weeks = 0
+        months = 0
+        if self.every == "Hour": hours = 1
+        elif self.every == "Day": days = 1
+        elif self.every == "Week": weeks = 1
+        elif self.every == "Month": months = 1
+        while current_stop <= self._to_:
+            dates.append((current_start, current_stop))
+            current_start += relativedelta(months = months, weeks = weeks, days = days, hours = hours)
+            current_stop += relativedelta(months = months, weeks = weeks, days = days, hours = hours)
+        return dates
+
 
 class CalWidget(QtWidgets.QDateTimeEdit):
     def __init__(self, parent = None):
@@ -265,10 +287,10 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.button_frame_layout.addWidget(self.add_button)
         self.button_frame_layout.addWidget(self.remove_button)
 
-        self.from_time_widget = QtWidgets.QTimeEdit()
-        self.from_time_widget.setDisplayFormat("HH:mm")
-        self.to_time_widget = QtWidgets.QTimeEdit()
-        self.to_time_widget.setDisplayFormat("HH:mm")
+        self.from_time_widget = QtWidgets.QDateTimeEdit()
+        self.from_time_widget.setDisplayFormat("yyyy/MM/dd HH:mm")
+        self.to_time_widget = QtWidgets.QDateTimeEdit()
+        self.to_time_widget.setDisplayFormat("yyyy/MM/dd HH:mm")
         self.repeat_widget = QtWidgets.QCheckBox("Repeat")
         self.repeat_widget.setTristate(False)
         self.repeat_widget.setChecked(True)
@@ -324,7 +346,7 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.event_list.itemDoubleClicked.connect(self.selectHandler)
         self.add_button.clicked.connect(self.addHandler)
         self.remove_button.clicked.connect(self.removeHandler)
-        self.from_time_widget.timeChanged.connect(self.fromTimeChanged)
+        self.from_time_widget.dateTimeChanged.connect(self.fromDateTimeChanged)
         self.from_repeat_widget.dateChanged.connect(self.fromDateChanged)
         self.repeat_widget.stateChanged.connect(self.repeatHandler)
         self.sync_widget.clicked.connect(self.syncHandler)
@@ -333,7 +355,7 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.repeat_widget.setChecked(False)
         # self.setMinimumWidth(300)
         self.centerOnScreen()
-        self.setTimeWidgets()
+        self.setDateTimeWidgets()
         self.changeDate()
 
     def centerOnScreen(self):
@@ -350,17 +372,21 @@ class CalendarWindow(QtWidgets.QMainWindow):
         msg.setStandardButtons(QtWidgets.QMessageBox.Ok)
         msg.exec_()
 
-    def setTimeWidgets(self, event = None):
+    def setDateTimeWidgets(self, event = None):
         if event == None:
             now = datetime.now()
-            self.from_time_widget.setTime(now.time())
-            self.to_time_widget.setTime((now + timedelta(minutes = 1)).time())
+            self.from_time_widget.setDateTime(now)
+            self.to_time_widget.setDateTime(now + timedelta(minutes = 1))
+            self.from_time_widget.setMinimumDate(now.date())
+            self.from_time_widget.setMaximumDate(now.date())
+            self.to_time_widget.setMinimumDate(now.date())
+            self.to_time_widget.setMaximumDate((now + timedelta(days = 1)).date())
 
             now = self.current_date
             self.from_repeat_widget.setDate(now)
         else:
-            self.from_time_widget.setTime(event.getStart())
-            self.to_time_widget.setTime(event.getStop())
+            self.from_time_widget.setDateTime(event.getStart())
+            self.to_time_widget.setDateTime(event.getStop())
             if event.isChild():
                 self.repeat_widget.setChecked(True)
                 self.from_repeat_widget.setDate(event.getFromRepeat())
@@ -410,11 +436,15 @@ class CalendarWindow(QtWidgets.QMainWindow):
                     every = self.every_widget.currentText()
                     from_ = self.from_time_widget.time().toPyTime()
                     to_ = self.to_time_widget.time().toPyTime()
-                    dates = self.datesGenerator(start, stop, every)
-                    for date in dates:
-                        event = Event(date, from_, to_, True, start,
-                            stop, every)
-                        self.saveEvent(event)
+
+                    r_event = RepeatableEvent(start, from_, stop, to_, every)
+                    dates = r_event.datesGenerator()
+                    print(dates)
+                    # dates = self.datesGenerator(start, stop, every)
+                    # for date in dates:
+                    #     event = Event(date, from_, to_, True, start,
+                    #         stop, every)
+                    #     self.saveEvent(event)
                 else:
                     event = Event(self.current_date, self.from_time_widget.time().toPyTime(),
                                         self.to_time_widget.time().toPyTime())
@@ -433,22 +463,7 @@ class CalendarWindow(QtWidgets.QMainWindow):
             self.is_editting = False
             self.times_group.setEnabled(True)
             self.add_button.setText("Save")
-            self.setTimeWidgets()
-
-    def datesGenerator(self, from_date, to_date, every):
-        start = datetime(from_date.year, from_date.month, from_date.day)
-        stop = datetime(to_date.year, to_date.month, to_date.day)
-        current = copy(start)
-        dates = []
-        while current <= stop:
-            dates.append(current.date())
-            if every == "Day":
-                current = current + relativedelta(days = 1)
-            elif every == "Week":
-                current = current + relativedelta(weeks = 1)
-            else:
-                current = current + relativedelta(months = 1)
-        return dates
+            self.setDateTimeWidgets()
 
     def checkEqual(self, event1, event2):
         if event1.isChild() and event2.isChild():
@@ -540,14 +555,14 @@ class CalendarWindow(QtWidgets.QMainWindow):
     def changeTimes(self):
         pos = self.event_list.currentRow()
         evt = self.events[self.formatDate(self.current_date)][pos]
-        self.setTimeWidgets(evt)
+        self.setDateTimeWidgets(evt)
         self.add_button.setText("Edit")
         self.times_group.setEnabled(False)
         self.remove_button.setEnabled(True)
 
-    def fromTimeChanged(self):
-        time = self.from_time_widget.time().toPyTime()
-        date = datetime(2018, 1, 1, time.hour, time.minute) + timedelta(minutes = 1)
+    def fromDateTimeChanged(self):
+        date = self.from_time_widget.dateTime().toPyDateTime()
+        date = date + timedelta(minutes = 1)
         self.to_time_widget.setMinimumTime(date.time())
 
     def fromDateChanged(self):
