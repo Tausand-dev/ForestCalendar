@@ -316,7 +316,9 @@ class CalendarWindow(QtWidgets.QMainWindow):
 
         fileMenu.addAction(saveAction)
         fileMenu.addAction(openAction)
+        fileMenu.addSeparator()
         fileMenu.addAction(exportAction)
+        fileMenu.addSeparator()
         fileMenu.addAction(quitAction)
 
         self.verticalLayout = QtWidgets.QVBoxLayout(wid)
