@@ -1,5 +1,6 @@
 import os
 import sys
+import pickle
 from copy import copy
 from datetime import datetime
 from datetime import timedelta
@@ -111,6 +112,12 @@ class Event(object):
         start = self.start.strftime("%d-%m-%y-%H-%M")
         stop = self.stop.strftime("%d-%m-%y-%H-%M")
         txt = "%s; %s\n"%(start, stop)
+        return txt
+
+    def viewRepresentation(self):
+        start = self.start.strftime("%Y/%m/%d %H:%M")
+        stop = self.stop.strftime("%Y/%m/%d %H:%M")
+        txt = "%s - %s"%(start, stop)
         return txt
 
     def __str__(self):
@@ -262,6 +269,28 @@ class TimeLabel(QtWidgets.QLabel):
         else:
             return True
 
+class ViewDialog(QtWidgets.QDialog):
+    def __init__(self, parent):
+        super(ViewDialog, self).__init__(parent)
+        self.setModal(True)
+        self.setWindowTitle("View all events")
+        self.parent = parent
+        self.layout = QtWidgets.QVBoxLayout()
+        self.setLayout(self.layout)
+
+        self.layout.addWidget(QtWidgets.QLabel("These are the following programmed events:"))
+
+        self.list_widget = QtWidgets.QListWidget()
+        self.layout.addWidget(self.list_widget)
+
+        events = self.parent.getEvents()
+        keys = sorted(list(events.keys()))
+        items = []
+        for key in keys:
+            day_events = events[key]
+            items += [event.viewRepresentation() for event in day_events]
+        self.list_widget.addItems(items)
+
 class CalendarWindow(QtWidgets.QMainWindow):
     def __init__(self, parent = None):
         super(QtWidgets.QMainWindow, self).__init__(parent)
@@ -269,6 +298,26 @@ class CalendarWindow(QtWidgets.QMainWindow):
 
         wid = QtWidgets.QWidget(self)
         self.setCentralWidget(wid)
+
+        mainMenu = self.menuBar()
+        fileMenu = mainMenu.addMenu('&File')
+
+        saveAction = QtWidgets.QAction("Save as", self)
+        saveAction.setShortcut("Ctrl+S")
+
+        openAction = QtWidgets.QAction("Open", self)
+        openAction.setShortcut("Ctrl+O")
+
+        exportAction = QtWidgets.QAction("Export", self)
+        exportAction.setShortcut("Ctrl+E")
+
+        quitAction = QtWidgets.QAction("Quit", self)
+        quitAction.setShortcut("Ctrl+Q")
+
+        fileMenu.addAction(saveAction)
+        fileMenu.addAction(openAction)
+        fileMenu.addAction(exportAction)
+        fileMenu.addAction(quitAction)
 
         self.verticalLayout = QtWidgets.QVBoxLayout(wid)
         self.verticalLayout.setContentsMargins(11, 11, 11, 11)
@@ -334,8 +383,10 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.button_frame.setSizePolicy(sizePolicy)
         self.button_frame_layout.setAlignment(QtCore.Qt.AlignRight)
 
-        self.export_widget = QtWidgets.QPushButton("Export Calendar")
+        self.view_widget = QtWidgets.QPushButton("View events")
         self.sync_widget = QtWidgets.QPushButton("Synchronize Clock")
+        self.export_widget = QtWidgets.QPushButton("Export Calendar")
+        self.button_frame_layout.addWidget(self.view_widget)
         self.button_frame_layout.addWidget(self.sync_widget)
         self.button_frame_layout.addWidget(self.export_widget)
 
@@ -353,6 +404,11 @@ class CalendarWindow(QtWidgets.QMainWindow):
         #####
         ##### SIGNALS
         #####
+        saveAction.triggered.connect(self.saveHandler)
+        openAction.triggered.connect(self.openHandler)
+        exportAction.triggered.connect(self.exportHandler)
+        quitAction.triggered.connect(self.close)
+
         self.calendar_widget.selectionChanged.connect(self.changeDate)
         self.event_list.itemSelectionChanged.connect(self.changeTimes)
         self.event_list.itemDoubleClicked.connect(self.selectHandler)
@@ -360,19 +416,24 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.remove_button.clicked.connect(self.removeHandler)
         self.from_time_widget.dateTimeChanged.connect(self.fromDateTimeChanged)
         self.repeat_widget.stateChanged.connect(self.repeatHandler)
+        self.view_widget.clicked.connect(self.viewHandler)
         self.sync_widget.clicked.connect(self.syncHandler)
         self.export_widget.clicked.connect(self.exportHandler)
 
         self.repeat_widget.setChecked(False)
         # self.setMinimumWidth(300)
-        self.centerOnScreen()
         self.setDateTimeWidgets()
         self.changeDate()
 
+    def getEvents(self):
+        return self.events
+
     def centerOnScreen(self):
-        resolution = QtWidgets.QDesktopWidget().screenGeometry()
-        self.move((resolution.width() / 2) - (self.frameSize().width() / 2),
-                  (resolution.height() / 2) - (self.frameSize().height() / 2))
+        frameGm = self.frameGeometry()
+        screen = QtWidgets.QApplication.desktop().screenNumber(QtWidgets.QApplication.desktop().cursor().pos())
+        centerPoint = QtWidgets.QApplication.desktop().screenGeometry(screen).center()
+        frameGm.moveCenter(centerPoint)
+        self.move(frameGm.topLeft())
 
     def errorWindow(self, exception):
         error_text = str(exception)
@@ -421,10 +482,8 @@ class CalendarWindow(QtWidgets.QMainWindow):
                     raise(SystemError("The following times overlap: (%s) and (%s) on %s."%(item, event, date)))
             self.events[txt].append(event)
             self.events[txt] = sorted(self.events[txt], key = str)
-            self.addItems(self.events[txt])
         except KeyError:
             self.events[txt] = [event]
-            self.addItems(self.events[txt])
 
     def addHandler(self):
         txt = self.add_button.text()
@@ -457,6 +516,7 @@ class CalendarWindow(QtWidgets.QMainWindow):
                     event = Event(self.from_time_widget.dateTime().toPyDateTime(),
                                         self.to_time_widget.dateTime().toPyDateTime())
                     self.saveEvent(event)
+                # self.addItems(self.events[txt])
             except SystemError as e:
                 self.errorWindow(e)
                 self.events = old_events
@@ -565,6 +625,26 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.to_time_widget.clearMinimumDateTime()
         self.to_time_widget.setMinimumDateTime(date)
 
+    def saveHandler(self):
+        file_name = QtWidgets.QFileDialog.getSaveFileName(self, 'Save Calendar', filter = '*.tfc')
+        if file_name[0]:
+            name = file_name[0].replace(".tfc", "")
+            file_name = name + file_name[1][1:]
+            with open(file_name, 'wb') as file:
+                pickle.dump(self.events, file)
+
+    def openHandler(self):
+        file_name = QtWidgets.QFileDialog.getOpenFileName(self, 'Open Calendar', filter = '*.tfc')
+        if file_name[0]:
+            name = file_name[0].replace(".tfc", "")
+            file_name = name + file_name[1][1:]
+            with open(file_name, 'rb') as file:
+                self.events = pickle.load(file)
+        self.changeDate()
+
+    def viewHandler(self):
+        ViewDialog(self).show()
+
     def syncHandler(self):
         ports = findPorts()
         if len(ports):
@@ -630,5 +710,6 @@ if __name__ == '__main__':
 
     main.setWindowIcon(icon)
     main.show()
+    main.centerOnScreen()
 
     sys.exit(app.exec_())
