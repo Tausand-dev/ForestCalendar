@@ -1,4 +1,5 @@
 import os
+import sys
 from copy import copy
 from datetime import datetime
 from datetime import timedelta
@@ -8,6 +9,11 @@ from dateutil.relativedelta import relativedelta
 from serial import Serial
 import serial.tools.list_ports as find_ports
 
+import __images__
+
+CURRENT_OS = sys.platform
+
+SCHEDULE_FILENAME = "schedule.dat"
 REPEAT_OPTIONS = ["Hour", "Day", "Week", "Month"]
 
 def findPorts():
@@ -379,31 +385,20 @@ class CalendarWindow(QtWidgets.QMainWindow):
 
     def setDateTimeWidgets(self, event = None):
         self.from_time_widget.clearMinimumDate()
-        self.from_time_widget.clearMaximumDate()
         self.to_time_widget.clearMinimumDate()
-        self.to_time_widget.clearMaximumDate()
         self.to_repeat_widget.clearMinimumDate()
-        if event == None:
-            now = datetime.combine(self.current_date, datetime.now().time())
-            self.from_time_widget.setMinimumDate(now.date())
-            self.from_time_widget.setMaximumDate(now.date())
-            self.to_time_widget.setMinimumDate(now.date())
-            self.to_time_widget.setMaximumDate((now + timedelta(days = 1)).date())
-            self.to_repeat_widget.setMinimumDate(now.date())
 
+        now = datetime.now()
+        self.from_time_widget.setMinimumDate(now.date())
+        self.to_repeat_widget.setMinimumDate(now.date())
+        if event == None:
+            now = datetime.combine(self.current_date, now.time())
             self.from_time_widget.setDateTime(now)
             self.to_time_widget.setDateTime(now + timedelta(minutes = 1))
             self.to_repeat_widget.setDate((now + timedelta(days = 1)).date())
         else:
-            self.from_time_widget.setMinimumDate(event.getStart().date())
-            self.from_time_widget.setMaximumDate(event.getStart().date())
-            self.to_time_widget.setMinimumDate(event.getStart().date())
-            self.to_time_widget.setMaximumDate((event.getStart() + timedelta(days = 1)).date())
-            self.to_repeat_widget.setMinimumDate(datetime.today())
-
             self.from_time_widget.setDateTime(event.getStart())
             self.to_time_widget.setDateTime(event.getStop())
-
             if event.isChild():
                 parent = event.getParent()
                 self.repeat_widget.setChecked(True)
@@ -567,7 +562,8 @@ class CalendarWindow(QtWidgets.QMainWindow):
     def fromDateTimeChanged(self):
         date = self.from_time_widget.dateTime().toPyDateTime()
         date = date + timedelta(minutes = 1)
-        self.to_time_widget.setMinimumTime(date.time())
+        self.to_time_widget.clearMinimumDateTime()
+        self.to_time_widget.setMinimumDateTime(date)
 
     def syncHandler(self):
         ports = findPorts()
@@ -595,9 +591,13 @@ class CalendarWindow(QtWidgets.QMainWindow):
             file = str(QtWidgets.QFileDialog.getExistingDirectory(self, "Select Directory"))
             if file != "":
                 try:
-                    path = os.path.join(file, "schedule.dat")
-                    with open(path, "w") as file:
-                        file.write("".join(lines))
+                    path = os.path.join(file, SCHEDULE_FILENAME)
+                    with open(path, "w") as f:
+                        f.write("".join(lines))
+
+                    QtWidgets.QMessageBox.information(self, 'File has been saved',
+                                     "%s file has been saved on: %s"%(SCHEDULE_FILENAME, file), QtWidgets.QMessageBox.Ok)
+
                 except Exception as e:
                     self.errorWindow(e)
 
@@ -611,23 +611,24 @@ class CalendarWindow(QtWidgets.QMainWindow):
             event.ignore()
 
 if __name__ == '__main__':
-    import sys
     app = QtWidgets.QApplication(sys.argv)
 
-    # icon = QtGui.QIcon('Registers/icon.ico')
-    # app.setWindowIcon(icon)
+    icon = QtGui.QIcon(':/icon.ico')
+    app.setWindowIcon(icon)
 
-    # splash_pix = QtGui.QPixmap('Registers/logo.png').scaledToWidth(500)
-    # splash = QtWidgets.QSplashScreen(splash_pix, QtCore.Qt.WindowStaysOnTopHint)
-    # splash.show()
     app.processEvents()
 
     main = CalendarWindow()
-
+    locale = QtCore.QLocale("en")
+    main.setLocale(locale)
     QtWidgets.QApplication.setStyle(QtWidgets.QStyleFactory.create('Fusion'))
 
-    # main.setWindowIcon(icon)
-    # splash.close()
+    if CURRENT_OS == 'win32':
+        import ctypes
+        myappid = 'forest.calendar.01' # arbitrary string
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
+    main.setWindowIcon(icon)
     main.show()
 
     sys.exit(app.exec_())
