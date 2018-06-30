@@ -10,12 +10,8 @@ from dateutil.relativedelta import relativedelta
 from serial import Serial
 import serial.tools.list_ports as find_ports
 
-import __images__
-
-CURRENT_OS = sys.platform
-
-SCHEDULE_FILENAME = "schedule.dat"
-REPEAT_OPTIONS = ["Hour", "Day", "Week", "Month"]
+import cons
+import usb_lib
 
 def findPorts():
     ports_objects = list(find_ports.comports())
@@ -291,6 +287,65 @@ class ViewDialog(QtWidgets.QDialog):
             items += [event.viewRepresentation() for event in day_events]
         self.list_widget.addItems(items)
 
+class DrivesDialog(QtWidgets.QDialog):
+    def __init__(self, parent):
+        super(DrivesDialog, self).__init__(parent)
+        self.parent = parent
+        self.verticalLayout = QtWidgets.QVBoxLayout(self)
+        self.verticalLayout.setContentsMargins(11, 11, 11, 11)
+        self.verticalLayout.setSpacing(6)
+
+        self.frame = QtWidgets.QFrame()
+        self.horizontalLayout = QtWidgets.QHBoxLayout(self.frame)
+        self.horizontalLayout.setContentsMargins(11, 11, 11, 11)
+        self.horizontalLayout.setSpacing(6)
+        self.label = QtWidgets.QLabel()
+        self.verticalLayout.addWidget(self.label)
+        self.verticalLayout.addWidget(self.frame)
+        self.comboBox = QtWidgets.QComboBox()
+        self.comboBox.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.refresh_button = QtWidgets.QPushButton()
+        self.refresh_button.setText("Refresh")
+        self.refresh_button.clicked.connect(self.refresh)
+        self.horizontalLayout.addWidget(self.comboBox)
+        self.horizontalLayout.addWidget(self.refresh_button)
+
+        self.label.setText("There are multiple drives connected, pick one:")
+        self.label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.setWindowTitle("Drive selection")
+        self.setMinimumSize(QtCore.QSize(450, 100))
+        self.buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            QtCore.Qt.Horizontal, self)
+
+        self.verticalLayout.addWidget(self.buttons)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject2)
+
+        self.drives = cons.DRIVES
+        self.refresh()
+
+    def refresh(self):
+        self.drives = cons.DRIVES
+        current = [str(item) for item in self.drives]
+        self.clear()
+        self.comboBox.addItems(current)
+        self.adjustSize()
+
+    def clear(self):
+        self.comboBox.clear()
+
+    def reject2(self):
+        self.clear()
+        self.reject()
+
+    def getDrive(self):
+        i = self.comboBox.currentIndex()
+        if i >= 0:
+            return self.drives[i]
+        else:
+            return None
+
 class CalendarWindow(QtWidgets.QMainWindow):
     def __init__(self, parent = None):
         super(QtWidgets.QMainWindow, self).__init__(parent)
@@ -361,7 +416,7 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.repeat_widget.setTristate(False)
         self.repeat_widget.setChecked(True)
         self.every_widget = QtWidgets.QComboBox()
-        self.every_widget.addItems(REPEAT_OPTIONS)
+        self.every_widget.addItems(cons.REPEAT_OPTIONS)
         self.to_repeat_widget = QtWidgets.QDateEdit()
         self.to_repeat_widget.setDisplayFormat("yyyy/MM/dd")
 
@@ -467,7 +522,7 @@ class CalendarWindow(QtWidgets.QMainWindow):
                 self.repeat_widget.setChecked(True)
                 self.to_repeat_widget.setDate(parent.getUntil())
                 repeat = parent.getRepeat()
-                self.every_widget.setCurrentIndex(REPEAT_OPTIONS.index(repeat))
+                self.every_widget.setCurrentIndex(cons.REPEAT_OPTIONS.index(repeat))
             else:
                 self.repeat_widget.setChecked(False)
                 self.every_widget.setCurrentIndex(0)
@@ -627,18 +682,21 @@ class CalendarWindow(QtWidgets.QMainWindow):
         self.to_time_widget.clearMinimumDateTime()
         self.to_time_widget.setMinimumDateTime(date)
 
+    def save(self, file_name):
+        with open(file_name, 'wb') as file:
+            pickle.dump(self.events, file)
+
     def saveHandler(self):
-        file_name = QtWidgets.QFileDialog.getSaveFileName(self, 'Save Calendar', filter = '*.tfc')
+        file_name = QtWidgets.QFileDialog.getSaveFileName(self, 'Save Calendar', filter = "*%s"%cons.FC_EXTENSION)
         if file_name[0]:
-            name = file_name[0].replace(".tfc", "")
+            name = file_name[0].replace(cons.FC_EXTENSION, "")
             file_name = name + file_name[1][1:]
-            with open(file_name, 'wb') as file:
-                pickle.dump(self.events, file)
+            self.save(file_name)
 
     def openHandler(self):
-        file_name = QtWidgets.QFileDialog.getOpenFileName(self, 'Open Calendar', filter = '*.tfc')
+        file_name = QtWidgets.QFileDialog.getOpenFileName(self, 'Open Calendar', filter = '*%s'%cons.FC_EXTENSION)
         if file_name[0]:
-            name = file_name[0].replace(".tfc", "")
+            name = file_name[0].replace(cons.FC_EXTENSION, "")
             file_name = name + file_name[1][1:]
             with open(file_name, 'rb') as file:
                 self.events = pickle.load(file)
@@ -650,17 +708,24 @@ class CalendarWindow(QtWidgets.QMainWindow):
     def syncHandler(self):
         ports = findPorts()
         if len(ports):
-            port = ports[ports.keys[0]]
-            serial = None
             try:
-                serial = RecorderSerial(port = port, timeout = 2)
-                serial.setTime(datetime.now())
-                serial.reset()
+                for port in ports:
+                    port = ports[port]
+                    serial = RecorderSerial(port = port, timeout = 2)
+                    serial.setTime(datetime.now())
+                    serial.reset()
+                    try: serial.close()
+                    except: pass
+
+                msg = "Clock has been synchronized."
+                if len(ports) > 1: msg = "Clocks have been synchronized."
+                QtWidgets.QMessageBox.information(self, 'Successful synchronization',
+                                        msg , QtWidgets.QMessageBox.Ok)
             except Exception as e:
                 self.errorWindow(e)
-            if serial != None:
-                try: serial.close()
-                except: pass
+
+        else:
+            self.errorWindow(Exception("There is no device connected."))
 
     def exportHandler(self):
         if self.add_button.text() == "Save":
@@ -670,18 +735,24 @@ class CalendarWindow(QtWidgets.QMainWindow):
         if len(lines) == 0:
             self.errorWindow(Exception("Calendar is empty."))
         else:
-            file = str(QtWidgets.QFileDialog.getExistingDirectory(self, "Select Directory"))
-            if file != "":
-                try:
-                    path = os.path.join(file, SCHEDULE_FILENAME)
-                    with open(path, "w") as f:
-                        f.write("".join(lines))
-
-                    QtWidgets.QMessageBox.information(self, 'File has been saved',
-                                     "%s file has been saved on: %s"%(SCHEDULE_FILENAME, file), QtWidgets.QMessageBox.Ok)
-
-                except Exception as e:
-                    self.errorWindow(e)
+            lines = "".join(lines)
+            if len(cons.DRIVES):
+                if len(cons.DRIVES) > 1:
+                    dialog = DrivesDialog(self)
+                    dialog.exec_()
+                    drive = dialog.getDrive()
+                else:
+                    drive = cons.DRIVES[0]
+                if drive != None:
+                    try:
+                        drive.save(lines)
+                        self.save(os.path.join(drive.getDrive(), cons.SAVE_FILENAME))
+                        QtWidgets.QMessageBox.information(self, 'File has been saved',
+                                                 "Schedule has been saved on: %s"%(drive.getDrive()), QtWidgets.QMessageBox.Ok)
+                    except Exception as e:
+                        self.errorWindow(e)
+            else:
+                self.errorWindow(Exception("There is no compatible SD card connected."))
 
     def closeEvent(self, event):
         quit_msg = "Are you sure you want to exit the program?"
@@ -691,27 +762,3 @@ class CalendarWindow(QtWidgets.QMainWindow):
             event.accept()
         else:
             event.ignore()
-
-if __name__ == '__main__':
-    app = QtWidgets.QApplication(sys.argv)
-
-    icon = QtGui.QIcon(':/icon.ico')
-    app.setWindowIcon(icon)
-
-    app.processEvents()
-
-    main = CalendarWindow()
-    locale = QtCore.QLocale("en")
-    main.setLocale(locale)
-    QtWidgets.QApplication.setStyle(QtWidgets.QStyleFactory.create('Fusion'))
-
-    if CURRENT_OS == 'win32':
-        import ctypes
-        myappid = 'forest.calendar.01' # arbitrary string
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-
-    main.setWindowIcon(icon)
-    main.show()
-    main.centerOnScreen()
-
-    sys.exit(app.exec_())

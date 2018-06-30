@@ -3,10 +3,10 @@
 block_cipher = None
 
 
-a = Analysis(['windows.py'],
+a = Analysis(['main.py'],
              pathex=['C:\\Users\\Rutherford\\Documents\\ForestCalendar'],
              binaries=[],
-             datas=[],
+             datas=[('v44k1q05.img', ".")],
              hiddenimports=[],
              hookspath=[],
              runtime_hooks=[],

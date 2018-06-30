@@ -1,4 +1,4 @@
 # Requirements
 ```
-pip install pyqt5 py-dateutil pyserial
+pip install pyqt5 py-dateutil pyserial psutil
 ```
