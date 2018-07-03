@@ -1,6 +1,7 @@
 import os
 import sys
 import pickle
+from time import sleep
 from copy import copy
 from datetime import datetime
 from datetime import timedelta
@@ -55,7 +56,7 @@ class RecorderSerial(Serial):
 
         while True:
             self.write(message)
-            ans = self.decode(serial.readline())
+            ans = self.decode(self.readline())
             try:
                 datetime.strptime(ans, '%d,%m,%y,%H,%M,%S')
                 break
