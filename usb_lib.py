@@ -38,7 +38,10 @@ class SD(object):
 
 def locateUsb():
     disks = psutil.disk_partitions()
-    match = [SD(disk.mountpoint) for disk in disks if ((disk.fstype == 'FAT32') and (disk.opts == 'rw,removable'))]
+    if cons.CURRENT_OS == "win32":
+        match = [SD(disk.mountpoint) for disk in disks if ((disk.fstype == 'FAT32') and (disk.opts == 'rw,removable'))]
+    else:
+        match = [SD(disk.mountpoint) for disk in disks if ((disk.fstype == 'vfat') and ('nosuid' in disk.opts ))]
     return match
 
 def driveMonitor():
